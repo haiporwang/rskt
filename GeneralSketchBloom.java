@@ -1,4 +1,4 @@
-package minusHLLestimator;
+package minusHLL;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
@@ -9,8 +9,18 @@ import java.util.Random;
 import java.util.Scanner;
 import java.util.Set;
 
-
-
+/**
+ * for SIGCOMM2018 sketchBlm
+ * changes based on CountMin: 
+ * 1) one array
+ * 2) change in initialization of w (w is the number of basic data structures in each segment, w / m)
+ * 3) same encode and estimate
+ * @author Youlin
+ */
+/** IMPORTANT NOTES
+The advantages of this noise canceling work over virtual HyperLogLog is online query, we need 128 registers queries
+However, for vHLL, it needs to query all the registers for noise calculation.
+*/
 public class GeneralSketchBloom {
 	public static Random rand = new Random();
 
@@ -20,7 +30,7 @@ public class GeneralSketchBloom {
 	public static  int M = 1024 * 1024* 8; 	// total memory space Mbits	
 	public static GeneralDataStructure[][] C;
 	public static Set<Integer> sizeMeasurementConfig = new HashSet<>(Arrays.asList()); // -1-regular CM; 0-enhanced CM; 1-Bitmap; 2-FM sketch; 3-HLL sketch
-	public static Set<Integer> spreadMeasurementConfig = new HashSet<>(Arrays.asList(1,2,3)); // 1-Bitmap; 2-FM sketch; 3-HLL sketch
+	public static Set<Integer> spreadMeasurementConfig = new HashSet<>(Arrays.asList(1)); // 1-Bitmap; 2-FM sketch; 3-HLL sketch
 	public static Set<Integer> expConfig = new HashSet<>(Arrays.asList()); //0-ECountMin dist exp
 	public static boolean isGetThroughput = false;
 
@@ -37,7 +47,6 @@ public class GeneralSketchBloom {
 	public static int counterSize = 32;				// size of each unit
 
 	/** parameters for bitmap */
-	
 	public static  int bitArrayLength = 5000;
 
 	/** parameters for FM sketch **/
@@ -53,11 +62,11 @@ public class GeneralSketchBloom {
 	/** number of runs for throughput measurement */
 	public static int loops = 50;
 	public static int Mbase=1024*1024;
-	public static int[][] Marray= {{},{2}};
-	public static int[][] mValueCounterarray= {{1},{1,2,4,8}};
+	public static int[][] Marray= {{},{1,2,4,8}};
+	public static int[][] mValueCounterarray= {{1},{1}};
 	public static int[][] bitArrayLengtharray= {{50000},{5000}};
 	public static int[][] mValueFMarray= {{128},{128}};
-	public static int[][] mValueHLLarray= {{128},{64}};
+	public static int[][] mValueHLLarray= {{128},{32,64,256}};
 	public static int[] SHLL;	
 	public static void main(String[] args) throws FileNotFoundException {
 		/** measurement for flow sizes **/
@@ -369,7 +378,7 @@ public class GeneralSketchBloom {
 	public static void estimateSize(String filePath) throws FileNotFoundException {
 		System.out.println("Estimating Flow SIZEs..." ); 
 		Scanner sc = new Scanner(new File(filePath));
-		String resultFilePath = GeneralUtil.path + "SketchBloom\\size\\rSkt_estimator_" + C[0][0].getDataStructureName()
+		String resultFilePath = GeneralUtil.path + "SketchBloom\\size\\+-" + C[0][0].getDataStructureName()
 				+ "_M_" +  M / 1024 / 1024 + "_d_" + d + "_u_" + u + "_m_" + m + "_T_" + times;
 		PrintWriter pw = new PrintWriter(new File(resultFilePath));
 		System.out.println("w :" + w);
@@ -433,7 +442,7 @@ public class GeneralSketchBloom {
 	public static void estimateSpread(String filepath) throws FileNotFoundException {
 		System.out.println("Estimating Flow CARDINALITY..." ); 
 		Scanner sc = new Scanner(new File(filepath));
-		String resultFilePath = GeneralUtil.path + "SketchBloom\\spread\\rSkt_estimator_+-+1"+ C[0][0].getDataStructureName()
+		String resultFilePath = GeneralUtil.path + "SketchBloom\\spread\\+-+rSkt2_"+ C[0][0].getDataStructureName()
 				+ "_M_" +  M / 1024 / 1024 + "_d_" + d + "_u_" + u + "_m_" + m;
 		PrintWriter pw = new PrintWriter(new File(resultFilePath));
 		System.out.println("Result directory: " + resultFilePath); 
@@ -443,24 +452,16 @@ public class GeneralSketchBloom {
 			String[] strs = entry.split("\\s+");
 			String flowid = GeneralUtil.getSperadFlowIDAndElementID(strs, false)[0];
 			int num = Integer.parseInt(strs[strs.length-1]);
-			int min = 500000;
-			int min_index = 0;
+			
 			//if (rand.nextDouble() <= GeneralUtil.getSpreadSampleRate(num)) {
 				int estimate = Integer.MAX_VALUE;
 				int [] value = new int[d];
 				for(int i = 0; i < d; i++) {
 					int j = (GeneralUtil.intHash(GeneralUtil.FNVHash1(flowid) ^ S[i]) % w + w) % w;
 					value[i]= C[0][j].getValue(flowid,SHLL);
-					//if (min>C[0][j].getSum(flowid,SHLL)) {
-						//min = C[0][j].getSum(flowid,SHLL);
-						//min_index = i;
-					//}
 				}
 				Arrays.sort(value);
 				estimate = d%2==1?value[(d-1)/2]:(int)((value[d/2]+value[d/2-1])/2);
-				//int j = (GeneralUtil.intHash(GeneralUtil.FNVHash1(flowid) ^ S[min_index]) % w + w) % w;
-				//estimate= C[0][j].getValue(flowid,SHLL);
-
 				estimate-=(int) noise;
 				if(estimate<=0) estimate=1;
 				pw.println(entry + "\t" + estimate);
@@ -586,26 +587,25 @@ public class GeneralSketchBloom {
 				+ "_M_" +  M / 1024 / 1024 + "_d_" + d + "_u_" + u + "_m_" + m + "_tp_" + GeneralUtil.throughputSamplingRate;
 		PrintWriter pw = new PrintWriter(new File(resultFilePath));
 		Double res = 0.0;
-		totalNum = 10000;
+		
 		double duration = 0;
-
+		totalNum = 100;
 		for (int i = 0; i < loops; i++) {
 			initCM(SketchBlm);
 			long startTime = System.nanoTime();
 			for (int j = 0; j < totalNum; j++) {
 				int estimate = Integer.MAX_VALUE;
-    			int [] value = new int[d];
+				int [] value = new int[d];
 				for (int k = 0; k < d; k++) {
-                	//int ll = (GeneralUtil.intHash(GeneralUtil.FNVHash1(dataElemID.get(j)) ^ S[k]) % w + w) % w;
+						int lll = (GeneralUtil.intHash(GeneralUtil.FNVHash1(dataFlowID.get(j)) ^ S[k]) % w + w) % w;
+						value[k]= C[0][lll].getValue(dataFlowID.get(j),SHLL);
+					//int ll = (GeneralUtil.intHash(GeneralUtil.FNVHash1(dataElemID.get(j)) ^ S[k]) % w + w) % w;
 					//C[0][ll].encode(dataElemID.get(j),SHLL);
-    				
-    				
-    					int ll = (GeneralUtil.intHash(GeneralUtil.FNVHash1(dataElemID.get(j)) ^ S[k]) % w + w) % w;
-    					value[k]= C[0][ll].getValue(dataElemID.get(j),SHLL);
-    				}
-    				Arrays.sort(value);
-    				estimate = d%2==1?value[(d-1)/2]:(int)((value[d/2]+value[d/2-1])/2);
-    				if(estimate<=0) estimate=1;
+
+					}
+					//Arrays.sort(value);
+					//estimate = d%2==1?value[(d-1)/2]:(int)((value[d/2]+value[d/2-1])/2);
+					if(estimate<=0) estimate=1;
                 
 			}	
 			long endTime = System.nanoTime();

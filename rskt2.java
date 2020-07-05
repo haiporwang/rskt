@@ -9,18 +9,7 @@ import java.util.Random;
 import java.util.Scanner;
 import java.util.Set;
 
-/**
- * for SIGCOMM2018 sketchBlm
- * changes based on CountMin: 
- * 1) one array
- * 2) change in initialization of w (w is the number of basic data structures in each segment, w / m)
- * 3) same encode and estimate
- * @author Youlin
- */
-/** IMPORTANT NOTES
-The advantages of this noise canceling work over virtual HyperLogLog is online query, we need 128 registers queries
-However, for vHLL, it needs to query all the registers for noise calculation.
-*/
+
 public class GeneralSketchBloom {
 	public static Random rand = new Random();
 
